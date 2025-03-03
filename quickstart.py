@@ -1,4 +1,5 @@
 # Google quickstart code: https://developers.google.com/gmail/api/quickstart/python
+import base64
 import os.path
 
 from google.auth.transport.requests import Request
@@ -37,15 +38,22 @@ def main():
   try:
     # Call the Gmail API
     service = build("gmail", "v1", credentials=creds)
-    results = service.users().labels().list(userId="me").execute()
-    labels = results.get("labels", [])
+    labels = service.users().labels().list(userId="me").execute()
+    label_name = "INBOX"
+    label_id = next((label["id"] for label in labels["labels"] if label["name"].upper() == label_name), None)
+    results = service.users().messages().list(userId="me", labelIds=[label_id], maxResults=3).execute()
+    messages = results.get("messages", [])
 
-    if not labels:
+    if not messages:
       print("No labels found.")
       return
-    print("Labels:")
-    for label in labels:
-      print(label["name"])
+    for msg in messages:
+      msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
+      parts = msg_data["payload"].get("parts", [])
+      for part in parts:
+        if part["mimeType"] == "text/plain":
+          print(base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8"))
+      #print(f"{msg_data["parts"]["headers"]}")
 
   except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
