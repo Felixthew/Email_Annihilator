@@ -1,6 +1,8 @@
+# This file is based off of Google's quickstart code modified by both me and ChatGPT
 # Google quickstart code: https://developers.google.com/gmail/api/quickstart/python
 import base64
 import os.path
+from mailcap import subst
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -52,12 +54,33 @@ def main():
       parts = msg_data["payload"].get("parts", [])
       for part in parts:
         if part["mimeType"] == "text/plain":
-          print(base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8"))
+          body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
+          subject = get_subject(msg_data)
+          sender = get_sender(msg_data)
+          print(f"{sender}\n{subject}\n{'='*100}\n{body}\n\n\n")
       #print(f"{msg_data["parts"]["headers"]}")
 
   except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
     print(f"An error occurred: {error}")
+
+#ChatGPT generated
+def get_sender(email_data):
+  """Extracts the sender's email from the email headers."""
+  headers = email_data["payload"]["headers"]
+  for header in headers:
+    if header["name"] == "From":
+      return header["value"]  # Format: "Sender Name <email@example.com>"
+  return "Unknown Sender"
+
+#ChatGPT generated
+def get_subject(email_data):
+  """Extracts the subject from the email headers."""
+  headers = email_data["payload"]["headers"]
+  for header in headers:
+    if header["name"] == "Subject":
+      return header["value"]
+  return "No Subject"
 
 
 if __name__ == "__main__":
