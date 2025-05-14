@@ -2,7 +2,7 @@
 # Google quickstart code: https://developers.google.com/gmail/api/quickstart/python
 import base64
 import os.path
-from mailcap import subst
+import pickle
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -13,7 +13,6 @@ from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-
 
 def main():
   """Shows basic usage of the Gmail API.
@@ -27,23 +26,25 @@ def main():
     labels = service.users().labels().list(userId="me").execute()
     label_name = "INBOX"
     label_id = next((label["id"] for label in labels["labels"] if label["name"].upper() == label_name), None)
-    results = service.users().messages().list(userId="me", labelIds=[label_id], maxResults=3).execute()
+    results = service.users().messages().list(userId="me", labelIds=[label_id], maxResults=20).execute()
     messages = results.get("messages", [])
 
     if not messages:
       print("No labels found.")
       return
+    emails = {'body' : [],
+              'subject' : [],
+              'sender' : []}
     for msg in messages:
       msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
       parts = msg_data["payload"].get("parts", [])
       for part in parts:
         if part["mimeType"] == "text/plain":
-          body = base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
-          subject = get_subject(msg_data)
-          sender = get_sender(msg_data)
-          print(f"{sender}\n{subject}\n{'='*100}\n{body}\n\n\n")
-      #print(f"{msg_data["parts"]["headers"]}")
-
+          emails['body'].append(base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8"))
+          emails['subject'].append(get_subject(msg_data))
+          emails['sender'].append(get_sender(msg_data))
+    with open("emails.pkl", 'wb') as f:
+      pickle.dump(emails, f)
   except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
     print(f"An error occurred: {error}")
