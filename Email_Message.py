@@ -1,7 +1,10 @@
-from attr import dataclass
+# Email_Message.py
+from dataclasses import dataclass
+from datetime import datetime
 
-class Email_Message:
-
-    def __init__(self,sender,message,body):
-        pass
-
+@dataclass
+class Email:
+    subject: str
+    sender: str
+    body: str
+    time_sent: datetime
