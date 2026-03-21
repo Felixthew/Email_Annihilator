@@ -26,16 +26,17 @@ from firestore_manager import get_last_history_id, set_last_history_id
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly",
           'https://www.googleapis.com/auth/gmail.send']
 
-_mode = "local"
+_mode = "cloud"
 TOKEN_PATH = "secrets/token/token.json"
 HISTORY_FILE = "secrets/history_id/history_id.txt"
+ACTIVE_PROMPT = "prompts/original_prompt.txt"
 
 def run(hours = 48):
-  """Shows basic usage of the Gmail API.
-  Lists the user's Gmail labels.
+  """
+  Runs email summarization on authenticated account.
+  :param hours: Timeframe of emails to summarize
   """
   creds = configure_credentials()
-
   try:
     # Call the Gmail API
     service = build("gmail", "v1", credentials=creds)
@@ -141,42 +142,19 @@ def get_time_sent(email_data):
   return None
 
 def summarize(emails):
+  """
+  Summarizes the emails provided and returns the html
+  :param emails: Emails to be summarized
+  :return: html representation of the summary
+  """
   with open("secrets/gemini_api_key/gemini_api_key.txt", "r") as f:
     api_key = f.read().strip()
   client = genai.Client(api_key=api_key)
 
-  prompt = f"""
-      You are a highly skilled and efficient personal assistant specializing in email summarization. Your primary goal is to provide a concise and actionable summary of my daily emails, prioritizing information that is most critical to my academic and personal assignments.
-      
-      Your judgment should be based on the following hierarchy of importance:
-      Tier 1 (Critical Information):
-      - Assignments: Due dates, submission details, and requirements for all school assignments.
-      - Class/Course Info: Updates to course schedules, changes in class times, or new materials posted by professors.
-      - Action Items: Any explicit requests for a response or a task I need to complete.
-
-      Tier 2 (Secondary Information):
-      - Meeting and event details (e.g., location, time, and agenda).
-      - General announcements from academic or personal services.
-
-      Tier 3 (Less Important Information):
-      - Promotional emails, newsletters, or general company updates.
-      - Social invites or non-critical personal messages.
-
-      The final summary should be structured in two distinct parts:
-
-      Part 1: Key Action Items and Critical Information
-      - This section must be a single, highly condensed paragraph that combines all the most important information from Tier 1 emails. It should be written in a direct, to-the-point style, as if you are telling me what I absolutely need to know right now.
-      - The paragraph should be a cohesive narrative, not a list of bullet points.
-
-      Part 2: Less Important Updates (Bullet Points)
-      - This section should be a concise bullet-point list summarizing the less critical information from Tier 2 and Tier 3 emails.
-      - Each bullet point should start with the sender and a brief summary.
-      - If an email has no relevant information, it should not be included in the summary at all.
-      
-      Note: All emails are forwarded from watt.f@northeastern.edu. Please ignore the forwarding details and treat the original sender as the source of the email. Ignore any emails that were not forwarded into the inbox. Also ignore previous "Email summary" emails those are previous summaries you provided.
-      Also note the time sent of the emails in relation to the time of this request which is {datetime.now().astimezone()}
-      --- Emails for Summarization ---
-      """
+  with open(ACTIVE_PROMPT, "r") as f:
+    prompt = f.read()
+  prompt += (f"current time is {datetime.now().astimezone()}"
+             f"--- Emails for Summarization ---")
   email_text = ""
   for i, email in enumerate(emails):
     email_text += f"--- Email {i + 1} ---\n"
@@ -194,6 +172,12 @@ def summarize(emails):
   return markdown.markdown(response.text)
 
 def send_summary(service, summary):
+  """
+  Sends the summary email
+  :param service: The service to send the email through
+  :param summary: The summary to be sent
+  :return: The gmail API response on send
+  """
   try:
     message = EmailMessage()
 
@@ -223,6 +207,10 @@ def send_summary(service, summary):
   return send_message
 
 async def update_historyID(request):
+  """
+  Updates the history ID in firestore
+  :param request: The requested provided by pub sub
+  """
   new_history_id = await get_history_id_from_pubsub(request)
   last_history_id = get_last_history_id()
 
@@ -252,6 +240,11 @@ async def update_historyID(request):
     set_last_history_id(new_history_id)
 
 async def get_history_id_from_pubsub(request):
+  """
+  Extracts the history ID from the pub sub request
+  :param request: The pub sub request
+  :return: the history ID
+  """
   envelope = await request.json()
   msg = envelope["message"]
   data = base64.b64decode(msg["data"]).decode("utf-8")

@@ -15,38 +15,50 @@ SYSTEM_LABELS = [
     "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "STARRED", "UNREAD"
 ]
 
-try:
-    creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
-except Exception:
-    flow = InstalledAppFlow.from_client_secrets_file("secrets/credentials.json", SCOPES)
-    creds = flow.run_local_server(port=0)
-    with open(TOKEN_PATH, "w") as token:
-        token.write(creds.to_json())
+def register_watch():
+    """
+    Registers a gmail watch on the trigger label. Note: this must be achieved by excluding all other labels first then
+    registering a watch for the label due to feature being bugged.
+    """
+    try:
+        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        service = build("gmail", "v1", credentials=creds)
 
-service = build("gmail", "v1", credentials=creds)
+        # Stop all existing watches first
+        service.users().stop(userId="me").execute()
+        print("Stopped existing watches")
+    except Exception:
+        flow = InstalledAppFlow.from_client_secrets_file("secrets/credentials.json", SCOPES)
+        creds = flow.run_local_server(port=0)
+        with open(TOKEN_PATH, "w") as token:
+            token.write(creds.to_json())
+        service = build("gmail", "v1", credentials=creds)
 
-# Stop all existing watches first
-service.users().stop(userId="me").execute()
-print("Stopped existing watches")
+        # Stop all existing watches first
+        service.users().stop(userId="me").execute()
+        print("Stopped existing watches")
 
-# First watch: exclude all system labels
-exclude_response = service.users().watch(
-    userId="me",
-    body={
-        "topicName": TOPIC,
-        "labelIds": SYSTEM_LABELS,
-        "labelFilterBehavior": "EXCLUDE"
-    }
-).execute()
-print("Exclude watch registered:", exclude_response)
 
-# Second watch: include only the Push Trigger label
-include_response = service.users().watch(
-    userId="me",
-    body={
-        "topicName": TOPIC,
-        "labelIds": [TARGET_LABEL],
-        "labelFilterBehavior": "INCLUDE"
-    }
-).execute()
-print("Include watch registered:", include_response)
+    # First watch: exclude all system labels
+    exclude_response = service.users().watch(
+        userId="me",
+        body={
+            "topicName": TOPIC,
+            "labelIds": SYSTEM_LABELS,
+            "labelFilterBehavior": "EXCLUDE"
+        }
+    ).execute()
+    print("Exclude watch registered:", exclude_response)
+
+    # Second watch: include only the Push Trigger label
+    include_response = service.users().watch(
+        userId="me",
+        body={
+            "topicName": TOPIC,
+            "labelIds": [TARGET_LABEL],
+            "labelFilterBehavior": "INCLUDE"
+        }
+    ).execute()
+    print("Include watch registered:", include_response)
+
+register_watch()
