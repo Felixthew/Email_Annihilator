@@ -2,7 +2,6 @@
 from fastapi import FastAPI, Request, HTTPException
 from summarize import run, update_historyID
 from gmail_watch import register_watch
-import os
 
 app = FastAPI()
 

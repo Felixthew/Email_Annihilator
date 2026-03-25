@@ -29,7 +29,7 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly",
 _mode = "cloud"
 TOKEN_PATH = "secrets/token/token.json"
 HISTORY_FILE = "secrets/history_id/history_id.txt"
-ACTIVE_PROMPT = "prompts/original_prompt.txt"
+ACTIVE_PROMPT = "prompts/v2.txt"
 
 def run(hours = 48):
   """
@@ -153,8 +153,7 @@ def summarize(emails):
 
   with open(ACTIVE_PROMPT, "r") as f:
     prompt = f.read()
-  prompt += (f"current time is {datetime.now().astimezone()}"
-             f"--- Emails for Summarization ---")
+  prompt += f"{datetime.now().astimezone()}\n--- Emails for Summarization ---\n"
   email_text = ""
   for i, email in enumerate(emails):
     email_text += f"--- Email {i + 1} ---\n"
