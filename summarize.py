@@ -4,10 +4,11 @@ import base64
 import json
 import os.path
 import os
-import pickle
+import re
 import markdown
+import zoneinfo
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from google import genai
 from google.auth.exceptions import RefreshError
@@ -30,21 +31,26 @@ _mode = "cloud"
 TOKEN_PATH = "secrets/token/token.json"
 HISTORY_FILE = "secrets/history_id/history_id.txt"
 ACTIVE_PROMPT = "prompts/v2.txt"
+TRIGGER_LABEL = "Label_5007763253467252103"
 
-def run(hours = 48):
+def init_service():
+  creds = configure_credentials()
+  return build("gmail", "v1", credentials=creds)
+
+def run(service, configs):
   """
   Runs email summarization on authenticated account.
-  :param hours: Timeframe of emails to summarize
+  :param service: gmail API service
+  :param configs: run configs in form of dict
   """
-  creds = configure_credentials()
+  hours = configs["hours"] if "hours" in configs else 48
   try:
     # Call the Gmail API
-    service = build("gmail", "v1", credentials=creds)
     labels = service.users().labels().list(userId="me").execute()
     label_name = "INBOX"
-    print([(label["name"], label["id"]) for label in labels["labels"]])
+    #print([(label["name"], label["id"]) for label in labels["labels"]])
     label_id = next((label["id"] for label in labels["labels"] if label["name"].upper() == label_name), None)
-    results = fetch_mail(service, label_id, hours=hours)
+    results = fetch_mail(service, label_id, hours)
     messages = results.get("messages", [])
 
     if not messages:
@@ -53,26 +59,20 @@ def run(hours = 48):
     emails = []
     for msg in messages:
       msg_data = service.users().messages().get(userId="me", id=msg["id"]).execute()
-      parts = msg_data["payload"].get("parts", [])
-      for part in parts:
-        if part["mimeType"] == "text/plain":
-          emails.append(Email(
-            body=base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8"),
-            subject=get_subject(msg_data),
-            sender=get_sender(msg_data),
-            time_sent=get_time_sent(msg_data)
-          ))
-    # with open("emails.pkl", 'wb') as f:
-    #   print(emails)
-    #   pickle.dump(emails, f)
+      emails.append(Email(
+        body=get_body(msg_data),
+        subject=get_subject(msg_data),
+        sender=get_sender(msg_data),
+        time_sent=get_time_sent(msg_data)
+      ))
     summary = summarize(emails)
     send = send_summary(service,summary)
-    print(send)
+    # print(send)
   except HttpError as error:
     # TODO(developer) - Handle errors from gmail API.
     print(f"An error occurred: {error}")
 
-def fetch_mail(service, label_id, hours=24):
+def fetch_mail(service, label_id, hours):
   # Get UTC time __ hours ago
   time_n_hours_ago = datetime.now() - timedelta(hours=hours)
   timestamp = int(time_n_hours_ago.timestamp())
@@ -80,7 +80,6 @@ def fetch_mail(service, label_id, hours=24):
   query = f"after:{timestamp}"
 
   return service.users().messages().list(userId="me", q=query,  labelIds=[label_id], maxResults=100).execute()
-
 
 def configure_credentials():
   if not os.path.exists(TOKEN_PATH):
@@ -108,6 +107,12 @@ def force_authenticate(creds):
   )
   creds = flow.run_local_server(port=0)
   return creds
+
+def get_body(msg_data):
+  parts = msg_data["payload"].get("parts", [])
+  for part in parts:
+    if part["mimeType"] == "text/plain":
+      return base64.urlsafe_b64decode(part["body"]["data"]).decode("utf-8")
 
 #ChatGPT generated
 def get_sender(email_data):
@@ -153,7 +158,8 @@ def summarize(emails):
 
   with open(ACTIVE_PROMPT, "r") as f:
     prompt = f.read()
-  prompt += f"{datetime.now().astimezone()}\n--- Emails for Summarization ---\n"
+  tz = zoneinfo.ZoneInfo("America/New_York")
+  prompt += f"{datetime.now(tz=tz)}\n--- Emails for Summarization ---\n"
   email_text = ""
   for i, email in enumerate(emails):
     email_text += f"--- Email {i + 1} ---\n"
@@ -205,10 +211,12 @@ def send_summary(service, summary):
     send_message = None
   return send_message
 
-async def update_historyID(request):
+async def update_historyID(service, request):
   """
   Updates the history ID in firestore
+  :param service: gmail API service
   :param request: The requested provided by pub sub
+  :return: the history of emails under the custom "trigger" label since last update
   """
   new_history_id = await get_history_id_from_pubsub(request)
   last_history_id = get_last_history_id()
@@ -219,17 +227,15 @@ async def update_historyID(request):
     return "Initialized history cursor", 200
 
   try:
-    creds = configure_credentials()
-    service = build("gmail", "v1", credentials=creds)
     # Pull everything since last cursor
     history = service.users().history().list(
       userId="me",
       startHistoryId=last_history_id,
       historyTypes=["messageAdded"],
-      labelId="Label_5007763253467252103"
+      labelId=TRIGGER_LABEL
     ).execute()
 
-    # process_history(history)  # your existing logic
+    return history
 
   except Exception as e:
     # Log but DO NOT block cursor advancement
@@ -250,5 +256,35 @@ async def get_history_id_from_pubsub(request):
   payload = json.loads(data)
   return payload["historyId"]
 
+def parse_configs(service, history):
+  """
+  Parses the run configs using the most recent message in history
+  :param service: gmail API service
+  :param history: history of email messages
+  :return: The configs in the form of a dict
+  """
+  configs = {}
+  message_ids = []
+  for record in history.get("history", []):
+    for added in record.get("messagesAdded", []):
+      message_ids.append(added["message"]["id"])
+
+  if not message_ids:
+    return configs
+
+  latest_msg = message_ids[-1]
+  msg_data = service.users().messages().get(
+    userId="me",
+    id=latest_msg,
+  ).execute()
+
+  body = get_body(msg_data).lower()
+  pattern = "hours: *(\d+)"
+  match = re.search(pattern, body)
+  if match:
+    configs["hours"] = int(match.group(1))
+  return configs
+
+
 if __name__ == "__main__":
-  run()
+  run(init_service(), {})
