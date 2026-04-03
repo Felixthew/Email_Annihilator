@@ -43,7 +43,7 @@ def run(service, configs):
   :param service: gmail API service
   :param configs: run configs in form of dict
   """
-  hours = configs["hours"] if "hours" in configs else 48
+  hours = int(configs["hours"]) if "hours" in configs else 24
   try:
     # Call the Gmail API
     labels = service.users().labels().list(userId="me").execute()
@@ -65,7 +65,7 @@ def run(service, configs):
         sender=get_sender(msg_data),
         time_sent=get_time_sent(msg_data)
       ))
-    summary = summarize(emails)
+    summary = summarize(emails, configs)
     send = send_summary(service,summary)
     # print(send)
   except HttpError as error:
@@ -146,20 +146,28 @@ def get_time_sent(email_data):
         return None
   return None
 
-def summarize(emails):
+def summarize(emails, configs):
   """
   Summarizes the emails provided and returns the html
   :param emails: Emails to be summarized
+  :param configs: Configs for summary
   :return: html representation of the summary
   """
+  # Setup GeminiAPI client
   with open("secrets/gemini_api_key/gemini_api_key.txt", "r") as f:
     api_key = f.read().strip()
   client = genai.Client(api_key=api_key)
 
+  # build the prompt
   with open(ACTIVE_PROMPT, "r") as f:
     prompt = f.read()
   tz = zoneinfo.ZoneInfo("America/New_York")
-  prompt += f"{datetime.now(tz=tz)}\n--- Emails for Summarization ---\n"
+  prompt += f"{datetime.now(tz=tz)}\n"
+  addon = configs["addon"] if "addon" in configs else "None"
+  prompt += f"Additional request details: {addon}\n"
+  prompt += "--- Emails for Summarization ---\n"
+
+  # add the emails
   email_text = ""
   for i, email in enumerate(emails):
     email_text += f"--- Email {i + 1} ---\n"
@@ -172,7 +180,7 @@ def summarize(emails):
     model="gemini-2.5-flash",
     contents= prompt + email_text
   )
-  print(response.text)
+  #print(response.text)
   # convert to HTML
   return markdown.markdown(response.text)
 
@@ -279,10 +287,15 @@ def parse_configs(service, history):
   ).execute()
 
   body = get_body(msg_data).lower()
-  pattern = "hours: *(\d+)"
-  match = re.search(pattern, body)
-  if match:
-    configs["hours"] = int(match.group(1))
+  config_list = body.split(",")
+  for config in config_list:
+    pattern = "[\w\s]*:[\w\s]*"
+    if re.match(pattern, config):
+      cfg_pair = config.split(":")
+      configs[cfg_pair[0].strip()] = cfg_pair[1]
+    else:
+      # TODO: handle invalid configs
+      continue
   return configs
 
 
