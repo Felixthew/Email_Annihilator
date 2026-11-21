@@ -2,3 +2,6 @@ secrets/
 tmp/
 .idea/
 __pycache__/
+*.egg-info/
+REFACTOR_PLAN.md
+ROADMAP.md
