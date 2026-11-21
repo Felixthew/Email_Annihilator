@@ -1,64 +1,44 @@
 # Email summarization: run orchestration, Gemini prompt, sending, trigger configs
 # Parts modified by both me and ChatGPT
-import base64
-import json
 import re
 import markdown
 import zoneinfo
 
-from dataclasses import dataclass
 from datetime import datetime
 
-from google import genai
-from googleapiclient.errors import HttpError
+from email_annihilator.gemini import GeminiClient
+from email_annihilator.gmail import GmailClient
+from email_annihilator.store import HistoryStore
 
-from email_annihilator.store import get_last_history_id, set_last_history_id
 
-
-HISTORY_FILE = "secrets/history_id/history_id.txt"
-ACTIVE_PROMPT = "prompts/v2.txt"
-
-@dataclass
-class Email:
-    subject: str
-    sender: str
-    body: str
-    time_sent: datetime
-
-def run(gmail, configs):
+def run(gmail: GmailClient, gemini: GeminiClient, prompt_path: str, configs):
   """
   Runs email summarization on authenticated account.
   :param gmail: GmailClient
+  :param gemini: GeminiClient
+  :param prompt_path: path to the prompt file
   :param configs: run configs in form of dict
   """
   hours = int(configs["hours"]) if "hours" in configs else 24
-  try:
-    emails = gmail.fetch_recent(hours)
+  emails = gmail.fetch_recent(hours)
 
-    if not emails:
-      print("No labels found.")
-      return
-    summary = summarize(emails, configs)
-    send = gmail.send_html(summary)
-    # print(send)
-  except HttpError as error:
-    # TODO(developer) - Handle errors from gmail API.
-    print(f"An error occurred: {error}")
+  if not emails:
+    print("No labels found.")
+    return
+  summary = summarize(gemini, prompt_path, emails, configs)
+  gmail.send_html(summary)
 
-def summarize(emails, configs):
+def summarize(gemini: GeminiClient, prompt_path: str, emails, configs):
   """
   Summarizes the emails provided and returns the html
+  :param gemini: GeminiClient
+  :param prompt_path: path to the prompt file
   :param emails: Emails to be summarized
   :param configs: Configs for summary
   :return: html representation of the summary
   """
-  # Setup GeminiAPI client
-  with open("secrets/gemini_api_key/gemini_api_key.txt", "r") as f:
-    api_key = f.read().strip()
-  client = genai.Client(api_key=api_key)
-
   # build the prompt
-  with open(ACTIVE_PROMPT, "r") as f:
+  with open(prompt_path, "r") as f:
     prompt = f.read()
   tz = zoneinfo.ZoneInfo("America/New_York")
   prompt += f"{datetime.now(tz=tz)}\n"
@@ -75,51 +55,37 @@ def summarize(emails, configs):
     email_text += f"Time sent: {email.time_sent}\n"
     email_text += f"Body:\n{email.body}\n\n"
 
-  response = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents= prompt + email_text
-  )
-  #print(response.text)
+  response = gemini.generate(prompt + email_text)
   # convert to HTML
-  return markdown.markdown(response.text)
+  return markdown.markdown(response)
 
-async def update_historyID(gmail, request):
+def update_historyID(gmail: GmailClient, store: HistoryStore, new_history_id) -> tuple[bool, str | None]:
   """
   Updates the history ID in firestore
   :param gmail: GmailClient
-  :param request: The requested provided by pub sub
-  :return: the body of the newest email under the custom "trigger" label since last update
+  :param store: HistoryStore
+  :param new_history_id: the history ID from the pub sub notification
+  :return: (should_run, body). should_run is False only on the first call, which just initializes the cursor.
+           body is the newest email under the custom "trigger" label since last update, None if there is none.
   """
-  new_history_id = await get_history_id_from_pubsub(request)
-  last_history_id = get_last_history_id()
+  last_history_id = store.get()
 
   # FIRST TIME BOOTSTRAP
   if last_history_id is None:
-    set_last_history_id(new_history_id)
-    return "Initialized history cursor", 200
+    store.set(new_history_id)
+    return False, None
 
   try:
     # Pull everything since last cursor
-    return gmail.latest_trigger_body(last_history_id)
+    return True, gmail.latest_trigger_body(last_history_id)
 
   except Exception as e:
     # Log but DO NOT block cursor advancement
-    print("Could not advance history")
+    print(f"Could not advance history: {e}")
+    return True, None
 
   finally:
-    set_last_history_id(new_history_id)
-
-async def get_history_id_from_pubsub(request):
-  """
-  Extracts the history ID from the pub sub request
-  :param request: The pub sub request
-  :return: the history ID
-  """
-  envelope = await request.json()
-  msg = envelope["message"]
-  data = base64.b64decode(msg["data"]).decode("utf-8")
-  payload = json.loads(data)
-  return payload["historyId"]
+    store.set(new_history_id)
 
 def parse_configs(body):
   """

@@ -13,3 +13,8 @@ class Settings:
     trigger_label: str = "Label_5007763253467252103"
     topic: str = "projects/email-endeavor/topics/gmail-push"
     recipient: str = "watt.f@northeastern.edu"
+
+    # Gemini
+    gemini_key_path: str = "secrets/gemini_api_key/gemini_api_key.txt"
+    gemini_model: str = "gemini-2.5-flash"
+    prompt_path: str = "prompts/v2.txt"

@@ -1,24 +1,16 @@
 from google.cloud import firestore
 
-db = firestore.Client()
 
-COLLECTION = "gmail_data"
-DOC_ID = "historyID"
+class HistoryStore:
+    def __init__(self, db: firestore.Client):
+        """
+        :param db: a firestore client, built in main.py
+        """
+        self.doc = db.collection("gmail_data").document("historyID")
 
-def get_last_history_id() -> str | None:
-    """
-    :return: the last history id retried from firestore
-    """
-    doc = db.collection(COLLECTION).document(DOC_ID).get()
-    if doc.exists:
-        return doc.to_dict().get("last_history_id")
-    return None
+    def get(self) -> str | None:
+        snap = self.doc.get()
+        return snap.to_dict().get("last_history_id") if snap.exists else None
 
-def set_last_history_id(history_id: str):
-    """
-    :param history_id: the history ID to store in firestore
-    """
-    db.collection(COLLECTION).document(DOC_ID).set(
-        {"last_history_id": history_id},
-        merge=True
-    )
+    def set(self, history_id: str):
+        self.doc.set({"last_history_id": history_id})

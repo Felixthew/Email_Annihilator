@@ -2,6 +2,7 @@
 # Parts based off of Google's quickstart code: https://developers.google.com/gmail/api/quickstart/python
 import base64
 import os.path
+from dataclasses import dataclass
 
 from datetime import datetime, timedelta
 
@@ -14,8 +15,6 @@ from email.message import EmailMessage
 from email.utils import parsedate_to_datetime
 
 from email_annihilator.config import Settings
-from email_annihilator.summary import Email
-
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly",
@@ -26,6 +25,14 @@ SYSTEM_LABELS = [
     "CATEGORY_FORUMS", "CATEGORY_UPDATES", "CATEGORY_PERSONAL",
     "CATEGORY_PROMOTIONS", "CATEGORY_SOCIAL", "STARRED", "UNREAD"
 ]
+
+
+@dataclass
+class Email:
+    subject: str
+    sender: str
+    body: str
+    time_sent: datetime
 
 
 class GmailClient:
@@ -45,23 +52,27 @@ class GmailClient:
         """
         Fetches inbox emails from the last n hours
         :param hours: how far back to look
-        :return: the emails, empty if there are none
+        :return: the emails, empty if there are none or the gmail API call failed
         """
-        labels = self.service.users().labels().list(userId="me").execute()
-        inbox_label_name = "INBOX"
-        label_id = next((label["id"] for label in labels["labels"] if label["name"].upper() == inbox_label_name), None)
-        results = self._fetch_mail(label_id, hours)
+        try:
+            labels = self.service.users().labels().list(userId="me").execute()
+            inbox_label_name = "INBOX"
+            label_id = next((label["id"] for label in labels["labels"] if label["name"].upper() == inbox_label_name), None)
+            results = self._fetch_mail(label_id, hours)
 
-        emails = []
-        for msg in results.get("messages", []):
-            msg_data = self.service.users().messages().get(userId="me", id=msg["id"]).execute()
-            emails.append(Email(
-                body=get_body(msg_data),
-                subject=get_subject(msg_data),
-                sender=get_sender(msg_data),
-                time_sent=get_time_sent(msg_data)
-            ))
-        return emails
+            emails = []
+            for msg in results.get("messages", []):
+                msg_data = self.service.users().messages().get(userId="me", id=msg["id"]).execute()
+                emails.append(Email(
+                    body=get_body(msg_data),
+                    subject=get_subject(msg_data),
+                    sender=get_sender(msg_data),
+                    time_sent=get_time_sent(msg_data)
+                ))
+            return emails
+        except HttpError as error:
+            print(f"An error occurred: {error}")
+            return []
 
     def _fetch_mail(self, label_id, hours):
         # Get UTC time __ hours ago

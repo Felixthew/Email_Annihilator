@@ -11,16 +11,16 @@ A personal Gmail summarizer running as a FastAPI service on Google Cloud (GCP pr
 No tests, linter, or CI exist.
 
 ```bash
-pip install -r requirements.txt
-uvicorn email_annihilator.main:app --app-dir src --port 8080   # run the service (as in Dockerfile CMD)
-PYTHONPATH=src python -m email_annihilator.main                 # one-off 24h summary, no server
-PYTHONPATH=src python -m email_annihilator.gmail                # (re)register the Gmail push watch
+pip install -e .                                   # installs the package + requirements.txt deps
+uvicorn email_annihilator.main:app --port 8080     # run the service
+python -m email_annihilator.main                   # one-off 24h summary, no server
+python -m email_annihilator.gmail                  # (re)register the Gmail push watch
 docker build -t email-annihilator .
 ```
 
-Code lives in `src/email_annihilator/` (no pyproject yet, hence `--app-dir src` / `PYTHONPATH`). Run everything from the repo root. All file paths (`secrets/...`, `prompts/...`) are relative.
+Code lives in `src/email_annihilator/`; `pyproject.toml` reads dependencies from `requirements.txt`. The Dockerfile does not install the package and still uses `--app-dir src`. Run everything from the repo root. All file paths (`secrets/...`, `prompts/...`) are relative.
 
-Deployment settings (paths, label, topic, recipient) live in `config.Settings`. `main.py` is the only place that builds `Settings` and the clients; everything else receives them as arguments.
+Deployment settings (paths, label, topic, recipient, Gemini model, prompt) live in `config.Settings`. `main.py` is the only place that builds `Settings` and the clients (`GmailClient`, `GeminiClient`, `HistoryStore`), per request; everything else receives them as arguments. Only the client modules import vendor SDKs; `summary.py` imports no `google.*`.
 
 ## Architecture
 
@@ -35,11 +35,10 @@ Deployment settings (paths, label, topic, recipient) live in `config.Settings`. 
 
 **Run configs:** the body of the trigger email is lowercased and split on commas. Each `key: value` pair that matches `^[\w\s]*:[\w\s]*$` becomes a config entry. The recognized keys are `hours` (lookback window, default 24) and `addon` (extra text appended to the prompt). Values are not stripped.
 
-**Prompt:** `ACTIVE_PROMPT` in `summary.py` selects the file in `prompts/` (currently `v2.txt`). The code appends the current America/New_York time, the addon, and then every email as plain text. The model's markdown output is converted to HTML with `markdown`.
+**Prompt:** `Settings.prompt_path` selects the file in `prompts/` (currently `v2.txt`). The code appends the current America/New_York time, the addon, and then every email as plain text. The model's markdown output is converted to HTML with `markdown`.
 
 ## Gotchas
 
-- `firestore.Client()` is created at import time in `store.py`, so importing any module (including `gmail`, which imports `Email` from `summary`) needs GCP application default credentials.
 - `Settings.local_auth`: `False` (the default, for cloud) raises an error when credentials are invalid. `True` opens a browser OAuth flow using `secrets/credentials.json` and rewrites the token.
 - Only the `text/plain` part of each email is read (`get_body`). The fetch is capped at 100 messages.
 
